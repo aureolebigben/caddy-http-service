@@ -20,6 +20,7 @@ All fields are optional unless noted otherwise.
 | `cache_ttl` | `duration` | — | Time-to-live for cache entries. A zero value means entries never expire. |
 | `cache_stale_enabled` | `bool` | `false` | Serve stale (expired) cache entries when the upstream request fails. |
 | `cache_key_template` | `string` | `{method}:{url}` | Template for building cache keys. Supports Caddy placeholders. |
+| `params` | `map[string]string` | — | Query parameters to append to the URL. Keys and values support placeholders. Values are URL-encoded before being appended. |
 
 ## Placeholder Usage
 
@@ -82,6 +83,7 @@ Cache keys are prefixed with `http_service/` in storage to avoid collisions with
 | `cache_ttl` | `<duration>` | Cache TTL (e.g., `1h`, `30m`). |
 | `cache_stale_enabled` | — | Enable stale-if-error fallback. |
 | `cache_key_template` | `<string>` | Cache key template. |
+| `param` | `<key> <value>` | Add a URL-encoded query parameter (repeatable). |
 
 ### Examples
 
@@ -90,6 +92,19 @@ Cache keys are prefixed with `http_service/` in storage to avoid collisions with
 example.com {
     http_service {
         url http://internal-api/tenants/{host}
+    }
+    root * /srv/{http_service.tenant}
+    file_server
+}
+```
+
+**Query parameters (URL-encoded):**
+```
+example.com {
+    http_service {
+        url http://internal-api/tenants
+        param domain {host}
+        param page 1
     }
     root * /srv/{http_service.tenant}
     file_server
@@ -136,7 +151,7 @@ app.example.com {
 }
 ```
 
-See the [Caddyfile](./Caddyfile) for more complete examples.
+See the [Caddyfile](Caddyfile.example) for more complete examples.
 
 ## Build & Install
 

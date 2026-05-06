@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -61,6 +63,19 @@ func (h *HttpService) UnmarshalCaddyfile(d *caddyfile.Dispenser) error {
 					h.Headers = make(map[string]string)
 				}
 				h.Headers[key] = val
+			case "param":
+				if !d.NextArg() {
+					return d.ArgErr()
+				}
+				key := d.Val()
+				if !d.NextArg() {
+					return d.ArgErr()
+				}
+				val := d.Val()
+				if h.Params == nil {
+					h.Params = make(map[string]string)
+				}
+				h.Params[key] = val
 			case "body":
 				if !d.NextArg() {
 					return d.ArgErr()
@@ -174,6 +189,11 @@ type HttpService struct {
 	// It supports Caddy placeholders. Default: "{method}:{url}".
 	CacheKeyTemplate string `json:"cache_key_template,omitempty"`
 
+	// Params are query parameters to append to the URL. Each key is the
+	// parameter name; each value is a Caddy placeholder template. Values
+	// are expanded and URL-encoded before being appended as query strings.
+	Params map[string]string `json:"params,omitempty"`
+
 	// client is the HTTP client configured during provisioning.
 	client *http.Client
 
@@ -247,6 +267,9 @@ func (h *HttpService) ServeHTTP(w http.ResponseWriter, r *http.Request, next cad
 
 	// Expand placeholders in URL, method, and body.
 	urlStr := repl.ReplaceAll(h.URL, "")
+	if len(h.Params) > 0 {
+		urlStr = buildURLWithParams(urlStr, h.Params, repl)
+	}
 	method := repl.ReplaceAll(h.Method, "")
 
 	var bodyReader io.Reader
@@ -433,6 +456,38 @@ func (h *HttpService) setCache(key string, data map[string]interface{}, ttl time
 			zap.Error(err),
 		)
 	}
+}
+
+// buildURLWithParams appends URL-encoded query parameters to baseURL.
+// Each parameter value is expanded via the replacer and then encoded.
+func buildURLWithParams(baseURL string, params map[string]string, repl *caddy.Replacer) string {
+	if len(params) == 0 {
+		return baseURL
+	}
+
+	u, err := url.Parse(baseURL)
+	if err != nil {
+		return baseURL
+	}
+
+	keys := make([]string, 0, len(params))
+	for k := range params {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+
+	q := u.Query()
+	for _, key := range keys {
+		rawVal := params[key]
+		expanded := repl.ReplaceAll(rawVal, "")
+		if expanded == "" {
+			continue
+		}
+		q.Add(key, expanded)
+	}
+	u.RawQuery = q.Encode()
+
+	return u.String()
 }
 
 // flattenJSON recursively flattens a JSON object into dot-separated keys

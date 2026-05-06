@@ -1,0 +1,33 @@
+# Test Caddyfile for http_service module
+#
+# Usage:
+#   Terminal 1: go run mock_server.go
+#   Terminal 2: xcaddy run -- --config Caddyfile.test
+
+# Main server using http_service
+:8080 {
+    route {
+        http_service {
+            url http://localhost:8888
+            param domain {host}
+            param name "john & sons"
+            param page 1
+        }
+
+        header Content-Type text/plain
+        respond "domain: {http_service.domain}, name: {http_service.name}, page: {http_service.page}"
+    }
+}
+
+# Test URL encoding
+:8081 {
+    route {
+        http_service {
+            url http://localhost:8888
+            param q {query.q}
+        }
+
+        header Content-Type text/plain
+        respond "q: {http_service.q}"
+    }
+}

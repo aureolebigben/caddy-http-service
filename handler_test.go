@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/caddyserver/caddy/v2"
+	"github.com/caddyserver/caddy/v2/caddyconfig/caddyfile"
 	"github.com/caddyserver/caddy/v2/modules/caddyhttp"
 	"github.com/caddyserver/certmagic"
 	"go.uber.org/zap"
@@ -789,5 +790,105 @@ func TestInterfaceImplementation(t *testing.T) {
 	}
 	if _, ok := hs.(caddyhttp.MiddlewareHandler); !ok {
 		t.Error("HttpService does not implement caddyhttp.MiddlewareHandler")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// buildURLWithParams tests
+// ---------------------------------------------------------------------------
+
+func TestBuildURLWithParams(t *testing.T) {
+	repl := caddy.NewReplacer()
+	repl.Set("host", "example.com")
+
+	tests := []struct {
+		name     string
+		baseURL  string
+		params   map[string]string
+		wantURL  string
+	}{
+		{
+			name:    "single param",
+			baseURL: "http://example.com/api",
+			params:  map[string]string{"domain": "{host}"},
+			wantURL: "http://example.com/api?domain=example.com",
+		},
+		{
+			name:    "multiple params",
+			baseURL: "http://example.com/api",
+			params:  map[string]string{"page": "1", "domain": "{host}"},
+			wantURL: "http://example.com/api?domain=example.com&page=1",
+		},
+		{
+			name:    "special chars are URL-encoded",
+			baseURL: "http://example.com/api",
+			params:  map[string]string{"name": "john & sons"},
+			wantURL: "http://example.com/api?name=john+%26+sons",
+		},
+		{
+			name:    "preserves existing query string",
+			baseURL: "http://example.com/api?existing=1",
+			params:  map[string]string{"domain": "{host}"},
+			wantURL: "http://example.com/api?domain=example.com&existing=1",
+		},
+		{
+			name:    "empty params returns base URL",
+			baseURL: "http://example.com/api",
+			params:  map[string]string{},
+			wantURL: "http://example.com/api",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := buildURLWithParams(tc.baseURL, tc.params, repl)
+			if got != tc.wantURL {
+				t.Errorf("buildURLWithParams() = %q, want %q", got, tc.wantURL)
+			}
+		})
+	}
+}
+
+func TestBuildURLWithParams_PlaceholderExpansion(t *testing.T) {
+	repl := caddy.NewReplacer()
+	repl.Set("host", "myhost")
+	repl.Set("path", "/users")
+
+	got := buildURLWithParams("http://example.com/api", map[string]string{
+		"host": "{host}",
+		"path": "{path}",
+	}, repl)
+
+	if got != "http://example.com/api?host=myhost&path=%2Fusers" {
+		t.Errorf("unexpected URL: %s", got)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// UnmarshalCaddyfile param directive tests
+// ---------------------------------------------------------------------------
+
+func TestUnmarshalCaddyfile_ParamDirective(t *testing.T) {
+	input := `http_service {
+		url http://example.com/api
+		param domain {host}
+		param page 1
+	}`
+
+	d := caddyfile.NewTestDispenser(input)
+	hs := new(HttpService)
+
+	if err := hs.UnmarshalCaddyfile(d); err != nil {
+		t.Fatalf("UnmarshalCaddyfile failed: %v", err)
+	}
+
+	if hs.Params == nil {
+		t.Fatal("Params should not be nil")
+	}
+	if hs.Params["domain"] != "{host}" {
+		t.Errorf("Params[domain] = %q, want %q", hs.Params["domain"], "{host}")
+	}
+	if hs.Params["page"] != "1" {
+		t.Errorf("Params[page] = %q, want %q", hs.Params["page"], "1")
 	}
 }

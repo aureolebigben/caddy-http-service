@@ -134,3 +134,26 @@ dev.example.com {
 
 	respond "{http_service.environment} ready" 200
 }
+
+# ---------------------------------------------------------------------------
+# Example 6: Query parameters with URL encoding
+# ---------------------------------------------------------------------------
+#
+# Parameters are defined separately from the URL and URL-encoded before being
+# appended. This is more secure than embedding placeholders directly in the
+# URL, as special characters like &, =, and spaces are properly encoded.
+#
+# A value like "john & sons" becomes "john%20%26%20sons".
+
+tenant.example.com {
+	http_service {
+		url http://tenant-api.internal/resolve
+		param domain {host}
+		param page {query.page}
+		cache_enabled
+		cache_ttl 30m
+	}
+
+	root * /data/{http_service.tenant_id}
+	file_server
+}
