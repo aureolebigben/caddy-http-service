@@ -2,14 +2,18 @@ package httpservice
 
 import (
 	"bytes"
+	"context"
 	"crypto/tls"
+	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"sync"
 	"time"
 
 	"github.com/caddyserver/caddy/v2"
 	"github.com/caddyserver/caddy/v2/modules/caddyhttp"
+	"go.uber.org/zap"
 )
 
 func init() {
@@ -54,6 +58,9 @@ type HttpService struct {
 
 	// client is the HTTP client configured during provisioning.
 	client *http.Client
+
+	// logger is used for logging warnings and errors.
+	logger *zap.Logger
 }
 
 // CaddyModule returns the Caddy module information.
@@ -66,6 +73,8 @@ func (HttpService) CaddyModule() caddy.ModuleInfo {
 
 // Provision validates the configuration and prepares the HTTP client.
 func (h *HttpService) Provision(ctx caddy.Context) error {
+	h.logger = ctx.Logger()
+
 	if h.URL == "" {
 		return fmt.Errorf("url is required")
 	}
@@ -86,21 +95,128 @@ func (h *HttpService) Provision(ctx caddy.Context) error {
 	return nil
 }
 
-// ServeHTTP handles the incoming request by proxying it to the configured
-// external service.
+// ServeHTTP calls the configured external HTTP service, injects JSON response
+// keys as {http_service.<key>} placeholders, and passes control to the next
+// handler in the middleware chain.
 func (h *HttpService) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddyhttp.Handler) error {
-	// Pass through to the next handler for now. The full proxy logic will
-	// replace this stub.
+	repl := r.Context().Value(caddy.ReplacerCtxKey).(*caddy.Replacer)
 
-	// Demonstrate reusable buffer pool for reading/writing request
-	// bodies. A sync.Pool avoids allocating new buffers on every request.
+	// Expand placeholders in URL, method, and body.
+	urlStr := repl.ReplaceAll(h.URL, "")
+	method := repl.ReplaceAll(h.Method, "")
+
+	var bodyReader io.Reader
+	if h.Body != "" {
+		bodyStr := repl.ReplaceAll(h.Body, "")
+		bodyReader = bytes.NewReader([]byte(bodyStr))
+	}
+
+	// Build the outgoing HTTP request. Use context.WithoutCancel so the
+	// request can complete even if the client disconnects.
+	ctx := context.WithoutCancel(r.Context())
+	req, err := http.NewRequestWithContext(ctx, method, urlStr, bodyReader)
+	if err != nil {
+		h.logger.Warn("failed to build request to external service",
+			zap.String("url", urlStr),
+			zap.String("method", method),
+			zap.Error(err),
+		)
+		return next.ServeHTTP(w, r)
+	}
+
+	// Set headers from configuration (expand keys and values).
+	for key, val := range h.Headers {
+		expandedKey := repl.ReplaceAll(key, "")
+		expandedVal := repl.ReplaceAll(val, "")
+		req.Header.Set(expandedKey, expandedVal)
+	}
+
+	// Execute the request to the external service.
+	resp, err := h.client.Do(req)
+	if err != nil {
+		h.logger.Warn("failed to call external service",
+			zap.String("url", urlStr),
+			zap.String("method", method),
+			zap.Error(err),
+		)
+		return next.ServeHTTP(w, r)
+	}
+	defer resp.Body.Close()
+
+	// Read the response body into a reusable buffer.
 	buf := bufferPool.Get().(*bytes.Buffer)
 	buf.Reset()
 	defer bufferPool.Put(buf)
 
-	_ = buf // placeholder — will be used for body reads
+	if _, err := buf.ReadFrom(resp.Body); err != nil {
+		h.logger.Warn("failed to read response body from external service",
+			zap.String("url", urlStr),
+			zap.Error(err),
+		)
+		return next.ServeHTTP(w, r)
+	}
+
+	bodyBytes := buf.Bytes()
+
+	// Warn on non-2xx responses and pass through.
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		h.logger.Warn("external service returned non-2xx status",
+			zap.String("url", urlStr),
+			zap.Int("status", resp.StatusCode),
+			zap.String("body", string(bodyBytes)),
+		)
+		return next.ServeHTTP(w, r)
+	}
+
+	// Parse JSON and inject each key as {http_service.<key>}.
+	var jsonData map[string]interface{}
+	if err := json.Unmarshal(bodyBytes, &jsonData); err != nil {
+		h.logger.Warn("external service response is not valid JSON",
+			zap.String("url", urlStr),
+			zap.String("content_type", resp.Header.Get("Content-Type")),
+			zap.Error(err),
+		)
+		return next.ServeHTTP(w, r)
+	}
+
+	flattenJSON("http_service", jsonData, repl)
 
 	return next.ServeHTTP(w, r)
+}
+
+// flattenJSON recursively flattens a JSON object into dot-separated keys
+// and sets each one on the replacer as a string value. For example:
+//
+//	{"data": {"root": "abc", "count": 3}}
+//
+// becomes:
+//
+//	{http_service.data.root}  -> "abc"
+//	{http_service.data.count} -> "3"
+func flattenJSON(prefix string, data map[string]interface{}, repl *caddy.Replacer) {
+	for key, val := range data {
+		fullKey := prefix + "." + key
+		switch v := val.(type) {
+		case map[string]interface{}:
+			flattenJSON(fullKey, v, repl)
+		case string:
+			repl.Set(fullKey, v)
+		case float64:
+			// JSON numbers decode as float64. Print without trailing .0 for
+			// integer-like values.
+			if v == float64(int64(v)) {
+				repl.Set(fullKey, fmt.Sprintf("%d", int64(v)))
+			} else {
+				repl.Set(fullKey, fmt.Sprintf("%v", v))
+			}
+		case bool:
+			repl.Set(fullKey, fmt.Sprintf("%v", v))
+		case nil:
+			repl.Set(fullKey, "")
+		default:
+			repl.Set(fullKey, fmt.Sprintf("%v", v))
+		}
+	}
 }
 
 // Interface guards.
