@@ -13,6 +13,8 @@ import (
 	"time"
 
 	"github.com/caddyserver/caddy/v2"
+	"github.com/caddyserver/caddy/v2/caddyconfig/caddyfile"
+	"github.com/caddyserver/caddy/v2/caddyconfig/httpcaddyfile"
 	"github.com/caddyserver/caddy/v2/modules/caddyhttp"
 	"github.com/caddyserver/certmagic"
 	"go.uber.org/zap"
@@ -20,6 +22,87 @@ import (
 
 func init() {
 	caddy.RegisterModule(&HttpService{})
+	httpcaddyfile.RegisterHandlerDirective("http_service", parseCaddyfile)
+}
+
+func parseCaddyfile(h httpcaddyfile.Helper) (caddyhttp.MiddlewareHandler, error) {
+	hs := new(HttpService)
+	if err := hs.UnmarshalCaddyfile(h.Dispenser); err != nil {
+		return nil, err
+	}
+	return hs, nil
+}
+
+// UnmarshalCaddyfile parses the http_service Caddyfile directive.
+func (h *HttpService) UnmarshalCaddyfile(d *caddyfile.Dispenser) error {
+	for d.Next() {
+		for nesting := d.Nesting(); d.NextBlock(nesting); {
+			switch d.Val() {
+			case "url":
+				if !d.NextArg() {
+					return d.ArgErr()
+				}
+				h.URL = d.Val()
+			case "method":
+				if !d.NextArg() {
+					return d.ArgErr()
+				}
+				h.Method = d.Val()
+			case "header":
+				if !d.NextArg() {
+					return d.ArgErr()
+				}
+				key := d.Val()
+				if !d.NextArg() {
+					return d.ArgErr()
+				}
+				val := d.Val()
+				if h.Headers == nil {
+					h.Headers = make(map[string]string)
+				}
+				h.Headers[key] = val
+			case "body":
+				if !d.NextArg() {
+					return d.ArgErr()
+				}
+				h.Body = d.Val()
+			case "timeout":
+				if !d.NextArg() {
+					return d.ArgErr()
+				}
+				dur, err := caddy.ParseDuration(d.Val())
+				if err != nil {
+					return d.WrapErr(err)
+				}
+				h.Timeout = caddy.Duration(dur)
+			case "tls_skip_verify":
+				h.TLSSkipVerify = true
+			case "cache_enabled":
+				h.CacheEnabled = true
+			case "cache_disabled":
+				h.CacheEnabled = false
+			case "cache_ttl":
+				if !d.NextArg() {
+					return d.ArgErr()
+				}
+				dur, err := caddy.ParseDuration(d.Val())
+				if err != nil {
+					return d.WrapErr(err)
+				}
+				h.CacheTTL = caddy.Duration(dur)
+			case "cache_stale_enabled":
+				h.CacheStaleEnabled = true
+			case "cache_key_template":
+				if !d.NextArg() {
+					return d.ArgErr()
+				}
+				h.CacheKeyTemplate = d.Val()
+			default:
+				return d.Errf("unknown subdirective: %s", d.Val())
+			}
+		}
+	}
+	return nil
 }
 
 // bufferPool provides a shared pool of bytes.Buffer instances for
@@ -382,4 +465,5 @@ func flattenJSON(prefix string, data map[string]interface{}, repl *caddy.Replace
 var (
 	_ caddy.Provisioner           = (*HttpService)(nil)
 	_ caddyhttp.MiddlewareHandler = (*HttpService)(nil)
+	_ caddyfile.Unmarshaler       = (*HttpService)(nil)
 )
