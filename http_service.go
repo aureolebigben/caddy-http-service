@@ -24,7 +24,7 @@ import (
 )
 
 func init() {
-	caddy.RegisterModule(&HttpService{})
+	caddy.RegisterModule(HttpService{})
 	httpcaddyfile.RegisterHandlerDirective("http_service", parseCaddyfile)
 }
 
