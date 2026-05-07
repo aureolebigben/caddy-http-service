@@ -5,8 +5,10 @@ import (
 	"context"
 	"crypto/tls"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"net/http"
 	"net/url"
 	"sort"
@@ -230,8 +232,8 @@ func (h *HttpService) Provision(ctx caddy.Context) error {
 	}
 
 	// Default cache key template.
-	if h.CacheKeyTemplate == "" {
-		h.CacheKeyTemplate = "{method}:{url}"
+	if h.CacheEnabled && h.CacheKeyTemplate == "" {
+		return fmt.Errorf("cache_key_template is required when caching is enabled")
 	}
 
 	// Capture the Caddy storage backend. This may be any registered
@@ -268,7 +270,7 @@ func (h *HttpService) ServeHTTP(w http.ResponseWriter, r *http.Request, next cad
 	// Expand placeholders in URL, method, and body.
 	urlStr := repl.ReplaceAll(h.URL, "")
 	if len(h.Params) > 0 {
-		urlStr = buildURLWithParams(urlStr, h.Params, repl)
+		urlStr = buildURLWithParams(urlStr, h.Params, repl, h.logger)
 	}
 	method := repl.ReplaceAll(h.Method, "")
 
@@ -279,14 +281,26 @@ func (h *HttpService) ServeHTTP(w http.ResponseWriter, r *http.Request, next cad
 	}
 
 	// ---- Cache lookup (before making the HTTP call) ----
+	var cacheKey string
 	if h.CacheEnabled && h.storage != nil {
-		cacheKey := h.buildCacheKey(repl)
+		cacheKey = h.buildCacheKey(repl)
 		if entry, ok := h.getCache(cacheKey); ok {
 			if time.Now().Before(entry.ExpiresAt) || entry.ExpiresAt.IsZero() {
 				// Cache hit and not expired (or no TTL configured).
+				h.logger.Debug("cache hit",
+					zap.String("cache_key", cacheKey),
+				)
 				flattenJSON("http_service", entry.Data, repl)
 				return next.ServeHTTP(w, r)
+			} else {
+				h.logger.Debug("cache expired, fetching fresh data",
+					zap.String("cache_key", cacheKey),
+				)
 			}
+		} else {
+			h.logger.Debug("cache miss",
+				zap.String("cache_key", cacheKey),
+			)
 		}
 	}
 
@@ -299,7 +313,7 @@ func (h *HttpService) ServeHTTP(w http.ResponseWriter, r *http.Request, next cad
 			zap.String("method", method),
 			zap.Error(err),
 		)
-		return h.serveStaleOrNext(repl, w, r, next)
+		return h.serveStaleOrNext(cacheKey, repl, w, r, next)
 	}
 
 	// Set headers from configuration (expand keys and values).
@@ -317,13 +331,16 @@ func (h *HttpService) ServeHTTP(w http.ResponseWriter, r *http.Request, next cad
 			zap.String("method", method),
 			zap.Error(err),
 		)
-		return h.serveStaleOrNext(repl, w, r, next)
+		return h.serveStaleOrNext(cacheKey, repl, w, r, next)
 	}
 	defer resp.Body.Close()
 
 	// Read the response body into a reusable buffer.
 	buf := bufferPool.Get().(*bytes.Buffer)
 	buf.Reset()
+	// bodyBytes references buf's internal buffer and must be consumed
+	// (by json.Unmarshal or string conversion) before this deferred
+	// Put recycles the underlying array.
 	defer bufferPool.Put(buf)
 
 	if _, err := buf.ReadFrom(resp.Body); err != nil {
@@ -331,7 +348,7 @@ func (h *HttpService) ServeHTTP(w http.ResponseWriter, r *http.Request, next cad
 			zap.String("url", urlStr),
 			zap.Error(err),
 		)
-		return h.serveStaleOrNext(repl, w, r, next)
+		return h.serveStaleOrNext(cacheKey, repl, w, r, next)
 	}
 
 	bodyBytes := buf.Bytes()
@@ -358,8 +375,7 @@ func (h *HttpService) ServeHTTP(w http.ResponseWriter, r *http.Request, next cad
 	}
 
 	// ---- Store in cache after a successful call ----
-	if h.CacheEnabled && h.storage != nil && jsonData != nil {
-		cacheKey := h.buildCacheKey(repl)
+	if cacheKey != "" && jsonData != nil {
 		h.setCache(cacheKey, jsonData, time.Duration(h.CacheTTL))
 	}
 
@@ -371,9 +387,8 @@ func (h *HttpService) ServeHTTP(w http.ResponseWriter, r *http.Request, next cad
 // serveStaleOrNext attempts to serve a stale cache entry when the external
 // service request fails. If no stale entry is available (or stale fallback
 // is disabled), it passes control to the next handler.
-func (h *HttpService) serveStaleOrNext(repl *caddy.Replacer, w http.ResponseWriter, r *http.Request, next caddyhttp.Handler) error {
-	if h.CacheStaleEnabled && h.CacheEnabled && h.storage != nil {
-		cacheKey := h.buildCacheKey(repl)
+func (h *HttpService) serveStaleOrNext(cacheKey string, repl *caddy.Replacer, w http.ResponseWriter, r *http.Request, next caddyhttp.Handler) error {
+	if cacheKey != "" && h.CacheStaleEnabled {
 		if entry, ok := h.getCache(cacheKey); ok {
 			h.logger.Warn("serving stale cache entry due to upstream failure",
 				zap.String("cache_key", cacheKey),
@@ -402,11 +417,7 @@ func (h *HttpService) getCache(key string) (cacheEntry, bool) {
 
 	raw, err := h.storage.Load(context.Background(), key)
 	if err != nil {
-		// A "not found" error is expected on cache miss and is not
-		// logged. Other errors are logged as warnings.
-		if !strings.Contains(err.Error(), "not found") &&
-			!strings.Contains(err.Error(), "no such file") &&
-			!strings.Contains(err.Error(), "does not exist") {
+		if !isNotFoundErr(err) {
 			h.logger.Warn("cache load error", zap.String("key", key), zap.Error(err))
 		}
 		return cacheEntry{}, false
@@ -460,13 +471,17 @@ func (h *HttpService) setCache(key string, data map[string]interface{}, ttl time
 
 // buildURLWithParams appends URL-encoded query parameters to baseURL.
 // Each parameter value is expanded via the replacer and then encoded.
-func buildURLWithParams(baseURL string, params map[string]string, repl *caddy.Replacer) string {
+func buildURLWithParams(baseURL string, params map[string]string, repl *caddy.Replacer, logger *zap.Logger) string {
 	if len(params) == 0 {
 		return baseURL
 	}
 
 	u, err := url.Parse(baseURL)
 	if err != nil {
+		logger.Warn("failed to parse URL for query params, using as-is",
+			zap.String("url", baseURL),
+			zap.Error(err),
+		)
 		return baseURL
 	}
 
@@ -488,6 +503,19 @@ func buildURLWithParams(baseURL string, params map[string]string, repl *caddy.Re
 	u.RawQuery = q.Encode()
 
 	return u.String()
+}
+
+// isNotFoundErr returns true if err indicates the key was not found in
+// storage. It checks the fs.ErrNotExist sentinel first, then falls back to
+// substring matching for backends that return custom error messages.
+func isNotFoundErr(err error) bool {
+	if errors.Is(err, fs.ErrNotExist) {
+		return true
+	}
+	msg := err.Error()
+	return strings.Contains(msg, "not found") ||
+		strings.Contains(msg, "no such file") ||
+		strings.Contains(msg, "does not exist")
 }
 
 // flattenJSON recursively flattens a JSON object into dot-separated keys

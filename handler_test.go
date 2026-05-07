@@ -841,7 +841,7 @@ func TestBuildURLWithParams(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			got := buildURLWithParams(tc.baseURL, tc.params, repl)
+			got := buildURLWithParams(tc.baseURL, tc.params, repl, zap.NewNop())
 			if got != tc.wantURL {
 				t.Errorf("buildURLWithParams() = %q, want %q", got, tc.wantURL)
 			}
@@ -857,7 +857,7 @@ func TestBuildURLWithParams_PlaceholderExpansion(t *testing.T) {
 	got := buildURLWithParams("http://example.com/api", map[string]string{
 		"host": "{host}",
 		"path": "{path}",
-	}, repl)
+	}, repl, zap.NewNop())
 
 	if got != "http://example.com/api?host=myhost&path=%2Fusers" {
 		t.Errorf("unexpected URL: %s", got)
