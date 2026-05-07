@@ -8,19 +8,19 @@ Supports response caching using Caddy's configurable storage backend (file syste
 
 All fields are optional unless noted otherwise.
 
-| Field | Type | Default | Description |
-|-------|------|---------|-------------|
-| `url` | `string` | **required** | External service URL. Supports Caddy placeholders (`{host}`, `{path}`, etc.). |
-| `method` | `string` | `GET` | HTTP method for the external request. |
-| `headers` | `map[string]string` | — | Custom headers sent to the external service. Keys and values support placeholders. |
-| `body` | `string` | — | Request body template. Supports placeholders. Typically used with POST/PUT. |
-| `timeout` | `duration` | — | Maximum duration for the external request. Zero means no timeout. |
-| `tls_skip_verify` | `bool` | `false` | Skip TLS certificate verification. Only use in trusted environments. |
-| `cache_enabled` | `bool` | `false` | Enable response caching via the configured Caddy storage backend. |
-| `cache_ttl` | `duration` | — | Time-to-live for cache entries. A zero value means entries never expire. |
-| `cache_stale_enabled` | `bool` | `false` | Serve stale (expired) cache entries when the upstream request fails. |
-| `cache_key_template` | `string` | **required when cache_enabled** | Template for building cache keys. Supports Caddy placeholders. |
-| `params` | `map[string]string` | — | Query parameters to append to the URL. Keys and values support placeholders. Values are URL-encoded before being appended. |
+| Field                 | Type                | Default                         | Description                                                                                                                |
+|-----------------------|---------------------|---------------------------------|----------------------------------------------------------------------------------------------------------------------------|
+| `url`                 | `string`            | **required**                    | External service URL. Supports Caddy placeholders (`{host}`, `{path}`, etc.).                                              |
+| `method`              | `string`            | `GET`                           | HTTP method for the external request.                                                                                      |
+| `headers`             | `map[string]string` | —                               | Custom headers sent to the external service. Keys and values support placeholders.                                         |
+| `body`                | `string`            | —                               | Request body template. Supports placeholders. Typically used with POST/PUT.                                                |
+| `timeout`             | `duration`          | —                               | Maximum duration for the external request. Zero means no timeout.                                                          |
+| `tls_skip_verify`     | `bool`              | `false`                         | Skip TLS certificate verification. Only use in trusted environments.                                                       |
+| `cache_enabled`       | `bool`              | `false`                         | Enable response caching via the configured Caddy storage backend.                                                          |
+| `cache_ttl`           | `duration`          | —                               | Time-to-live for cache entries. A zero value means entries never expire.                                                   |
+| `cache_stale_enabled` | `bool`              | `false`                         | Serve stale (expired) cache entries when the upstream request fails.                                                       |
+| `cache_key_template`  | `string`            | **required when cache_enabled** | Template for building cache keys. Supports Caddy placeholders.                                                             |
+| `params`              | `map[string]string` | —                               | Query parameters to append to the URL. Keys and values support placeholders. Values are URL-encoded before being appended. |
 
 ## Placeholder Usage
 
@@ -70,20 +70,20 @@ Cache keys are prefixed with `http_service/` in storage to avoid collisions with
 
 ### Caddyfile Directives
 
-| Directive | Arguments | Description |
-|-----------|-----------|-------------|
-| `url` | `<string>` | External service URL (required). |
-| `method` | `<string>` | HTTP method (default: `GET`). |
-| `header` | `<key> <value>` | Add a custom header (repeatable). |
-| `body` | `<string>` | Request body template. |
-| `timeout` | `<duration>` | Request timeout (e.g., `5s`, `1m`). |
-| `tls_skip_verify` | — | Skip TLS certificate verification. |
-| `cache_enabled` | — | Enable response caching. |
-| `cache_disabled` | — | Explicitly disable caching. |
-| `cache_ttl` | `<duration>` | Cache TTL (e.g., `1h`, `30m`). |
-| `cache_stale_enabled` | — | Enable stale-if-error fallback. |
-| `cache_key_template` | `<string>` | Cache key template. |
-| `param` | `<key> <value>` | Add a URL-encoded query parameter (repeatable). |
+| Directive             | Arguments       | Description                                     |
+|-----------------------|-----------------|-------------------------------------------------|
+| `url`                 | `<string>`      | External service URL (required).                |
+| `method`              | `<string>`      | HTTP method (default: `GET`).                   |
+| `header`              | `<key> <value>` | Add a custom header (repeatable).               |
+| `body`                | `<string>`      | Request body template.                          |
+| `timeout`             | `<duration>`    | Request timeout (e.g., `5s`, `1m`).             |
+| `tls_skip_verify`     | —               | Skip TLS certificate verification.              |
+| `cache_enabled`       | —               | Enable response caching.                        |
+| `cache_disabled`      | —               | Explicitly disable caching.                     |
+| `cache_ttl`           | `<duration>`    | Cache TTL (e.g., `1h`, `30m`).                  |
+| `cache_stale_enabled` | —               | Enable stale-if-error fallback.                 |
+| `cache_key_template`  | `<string>`      | Cache key template.                             |
+| `param`               | `<key> <value>` | Add a URL-encoded query parameter (repeatable). |
 
 ### Examples
 
@@ -168,3 +168,7 @@ Replace the module path with your own if you've forked or renamed it.
 ## License
 
 MIT — see [LICENSE](./LICENSE).
+
+---
+
+Development assisted by AI.
