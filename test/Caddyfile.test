@@ -12,19 +12,25 @@
 
 # Main server using http_service with caching
 :8080 {
-    route {
-        http_service {
-            url http://localhost:8888
-            param domain {host}
-            param name "john & sons"
-            param page 1
-            cache_enabled
-            cache_key_template "tenant:{host}"
-            cache_ttl 5m
-        }
+    handle /static/* {
+        respond "http service was not used"
+    }
 
-        header Content-Type text/plain
-        respond "domain: {http_service.domain}, name: {http_service.name}, page: {http_service.page}"
+    handle {
+        route {
+            http_service {
+                url http://localhost:8888
+                param domain {host}
+                param name "john & sons"
+                param page 1
+                cache_enabled
+                cache_key_template "tenant:{host}"
+                cache_ttl 5m
+            }
+
+            header Content-Type text/plain
+            respond "domain: {http_service.domain}, name: {http_service.name}, page: {http_service.page}"
+        }
     }
 }
 
