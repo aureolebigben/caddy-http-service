@@ -13,7 +13,6 @@ import (
 	"net/url"
 	"sort"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/caddyserver/caddy/v2"
@@ -122,14 +121,6 @@ func (h *HttpService) UnmarshalCaddyfile(d *caddyfile.Dispenser) error {
 	return nil
 }
 
-// bufferPool provides a shared pool of bytes.Buffer instances for
-// efficient reuse when reading and writing request/response bodies.
-var bufferPool = sync.Pool{
-	New: func() any {
-		return new(bytes.Buffer)
-	},
-}
-
 // storageNamespace is the prefix used for all cache keys stored in the
 // Caddy storage backend to avoid collisions with other modules.
 const storageNamespace = "http_service/"
@@ -203,15 +194,12 @@ type HttpService struct {
 	// be any registered storage module (file, redis, consul, etc.).
 	storage certmagic.Storage
 
-	// mu protects concurrent access to the storage backend.
-	mu sync.Mutex
-
 	// logger is used for logging warnings and errors.
 	logger *zap.Logger
 }
 
 // CaddyModule returns the Caddy module information.
-func (*HttpService) CaddyModule() caddy.ModuleInfo {
+func (HttpService) CaddyModule() caddy.ModuleInfo {
 	return caddy.ModuleInfo{
 		ID:  "http.handlers.http_service",
 		New: func() caddy.Module { return new(HttpService) },
@@ -264,7 +252,7 @@ func (h *HttpService) Provision(ctx caddy.Context) error {
 //
 // If CacheStaleEnabled is true and the outbound call fails, a stale
 // (expired) cache entry is served as a fallback.
-func (h *HttpService) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddyhttp.Handler) error {
+func (h HttpService) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddyhttp.Handler) error {
 	repl := r.Context().Value(caddy.ReplacerCtxKey).(*caddy.Replacer)
 
 	// Expand placeholders in URL, method, and body.
@@ -335,23 +323,14 @@ func (h *HttpService) ServeHTTP(w http.ResponseWriter, r *http.Request, next cad
 	}
 	defer resp.Body.Close()
 
-	// Read the response body into a reusable buffer.
-	buf := bufferPool.Get().(*bytes.Buffer)
-	buf.Reset()
-	// bodyBytes references buf's internal buffer and must be consumed
-	// (by json.Unmarshal or string conversion) before this deferred
-	// Put recycles the underlying array.
-	defer bufferPool.Put(buf)
-
-	if _, err := buf.ReadFrom(resp.Body); err != nil {
+	bodyBytes, err := io.ReadAll(resp.Body)
+	if err != nil {
 		h.logger.Warn("failed to read response body from external service",
 			zap.String("url", urlStr),
 			zap.Error(err),
 		)
 		return h.serveStaleOrNext(cacheKey, repl, w, r, next)
 	}
-
-	bodyBytes := buf.Bytes()
 
 	// Warn on non-2xx responses and pass through.
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
@@ -387,7 +366,7 @@ func (h *HttpService) ServeHTTP(w http.ResponseWriter, r *http.Request, next cad
 // serveStaleOrNext attempts to serve a stale cache entry when the external
 // service request fails. If no stale entry is available (or stale fallback
 // is disabled), it passes control to the next handler.
-func (h *HttpService) serveStaleOrNext(cacheKey string, repl *caddy.Replacer, w http.ResponseWriter, r *http.Request, next caddyhttp.Handler) error {
+func (h HttpService) serveStaleOrNext(cacheKey string, repl *caddy.Replacer, w http.ResponseWriter, r *http.Request, next caddyhttp.Handler) error {
 	if cacheKey != "" && h.CacheStaleEnabled {
 		if entry, ok := h.getCache(cacheKey); ok {
 			h.logger.Warn("serving stale cache entry due to upstream failure",
@@ -403,7 +382,7 @@ func (h *HttpService) serveStaleOrNext(cacheKey string, repl *caddy.Replacer, w 
 // buildCacheKey returns the storage key for the current request by expanding
 // the configured CacheKeyTemplate with the request's replacer and prefixing
 // the result with the storage namespace.
-func (h *HttpService) buildCacheKey(repl *caddy.Replacer) string {
+func (h HttpService) buildCacheKey(repl *caddy.Replacer) string {
 	rawKey := repl.ReplaceAll(h.CacheKeyTemplate, "")
 	return storageNamespace + rawKey
 }
@@ -411,10 +390,7 @@ func (h *HttpService) buildCacheKey(repl *caddy.Replacer) string {
 // getCache retrieves and deserializes a cache entry from the storage backend.
 // The second return value indicates whether a valid entry was found.
 // Storage errors are logged and treated as a cache miss.
-func (h *HttpService) getCache(key string) (cacheEntry, bool) {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-
+func (h HttpService) getCache(key string) (cacheEntry, bool) {
 	raw, err := h.storage.Load(context.Background(), key)
 	if err != nil {
 		if !isNotFoundErr(err) {
@@ -438,7 +414,7 @@ func (h *HttpService) getCache(key string) (cacheEntry, bool) {
 // setCache serializes a cache entry and stores it in the storage backend.
 // Storage errors are logged and otherwise ignored (the response was already
 // served successfully).
-func (h *HttpService) setCache(key string, data map[string]interface{}, ttl time.Duration) {
+func (h HttpService) setCache(key string, data map[string]interface{}, ttl time.Duration) {
 	var expiresAt time.Time
 	if ttl > 0 {
 		expiresAt = time.Now().Add(ttl)
@@ -457,9 +433,6 @@ func (h *HttpService) setCache(key string, data map[string]interface{}, ttl time
 		)
 		return
 	}
-
-	h.mu.Lock()
-	defer h.mu.Unlock()
 
 	if err := h.storage.Store(context.Background(), key, raw); err != nil {
 		h.logger.Warn("cache store error",
