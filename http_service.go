@@ -134,7 +134,8 @@ type cacheEntry struct {
 }
 
 // HttpService implements an HTTP handler module that proxies requests to an
-// external HTTP service. It is registered as http.handlers.http_service.
+// external HTTP service. parses the JSON response, and injects each key as a {http_service.<key>} placeholder available to subsequent handlers in the middleware chain.
+// It is registered as http.handlers.http_service.
 type HttpService struct {
 	// URL is the external service URL. It may contain Caddy placeholders
 	// such as {host}, {uri}, {path}, {method}, etc.
