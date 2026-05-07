@@ -19,7 +19,7 @@ All fields are optional unless noted otherwise.
 | `cache_enabled` | `bool` | `false` | Enable response caching via the configured Caddy storage backend. |
 | `cache_ttl` | `duration` | — | Time-to-live for cache entries. A zero value means entries never expire. |
 | `cache_stale_enabled` | `bool` | `false` | Serve stale (expired) cache entries when the upstream request fails. |
-| `cache_key_template` | `string` | `{method}:{url}` | Template for building cache keys. Supports Caddy placeholders. |
+| `cache_key_template` | `string` | **required when cache_enabled** | Template for building cache keys. Supports Caddy placeholders. |
 | `params` | `map[string]string` | — | Query parameters to append to the URL. Keys and values support placeholders. Values are URL-encoded before being appended. |
 
 ## Placeholder Usage
@@ -124,9 +124,9 @@ geo.example.com {
     http_service {
         url https://geo-api.internal/lookup/{http.request.remote.host}
         cache_enabled
+        cache_key_template geo:{http.request.remote.host}
         cache_ttl 1h
         cache_stale_enabled
-        cache_key_template geo:{http.request.remote.host}
     }
     header X-Geo-Country {http_service.country}
 }
@@ -143,6 +143,7 @@ app.example.com {
         http_service {
             url http://api.internal/info
             cache_enabled
+            cache_key_template info:{host}
             cache_ttl 30m
         }
         root * /data/{http_service.tenant_id}

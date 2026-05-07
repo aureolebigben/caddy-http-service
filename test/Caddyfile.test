@@ -2,9 +2,15 @@
 #
 # Usage:
 #   Terminal 1: go run mock_server.go
-#   Terminal 2: xcaddy run -- --config Caddyfile.test
+#   Terminal 2: xcaddy run --config test/Caddyfile.test
 
-# Main server using http_service
+{
+    log {
+        level DEBUG
+    }
+}
+
+# Main server using http_service with caching
 :8080 {
     route {
         http_service {
@@ -12,6 +18,9 @@
             param domain {host}
             param name "john & sons"
             param page 1
+            cache_enabled
+            cache_key_template "tenant:{host}"
+            cache_ttl 5m
         }
 
         header Content-Type text/plain
@@ -19,7 +28,7 @@
     }
 }
 
-# Test URL encoding
+# Test URL encoding (without cache)
 :8081 {
     route {
         http_service {

@@ -75,9 +75,9 @@ cdn.example.com {
 		url https://geo-api.internal/lookup/{http.request.remote.host}
 		method GET
 		cache_enabled
+		cache_key_template geo:{http.request.remote.host}
 		cache_ttl 1h
 		cache_stale_enabled
-		cache_key_template geo:{http.request.remote.host}
 	}
 
 	# {http_service.country}, {http_service.region} are injected from
@@ -111,8 +111,9 @@ app.example.com {
 	# then serve files from the correct root.
 	handle {
 		http_service {
-			url http://tenant-api.internal/resolve/{host}
+			url http://tenant-api.internal/resolve
 			cache_enabled
+			cache_key_template tenant:{host}
 			cache_ttl 30m
 		}
 		root * /data/{http_service.tenant_id}
@@ -129,6 +130,7 @@ dev.example.com {
 		url https://dev-api.internal/info
 		tls_skip_verify
 		cache_enabled
+		cache_key_template dev:info
 		cache_ttl 5m
 	}
 
@@ -151,6 +153,7 @@ tenant.example.com {
 		param domain {host}
 		param page {query.page}
 		cache_enabled
+		cache_key_template tenant:{host}
 		cache_ttl 30m
 	}
 
