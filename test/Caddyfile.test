@@ -1,0 +1,48 @@
+# Test Caddyfile for http_service module
+#
+# Usage:
+#   Terminal 1: go run mock_server.go
+#   Terminal 2: xcaddy run --config test/Caddyfile.test
+
+{
+    log {
+        level DEBUG
+    }
+}
+
+# Main server using http_service with caching
+:8080 {
+    handle /static/* {
+        respond "http service was not used"
+    }
+
+    handle {
+        route {
+            http_service {
+                url http://localhost:8888
+                param domain {host}
+                param name "john & sons"
+                param page 1
+                cache_enabled
+                cache_key_template "tenant:{host}"
+                cache_ttl 5m
+            }
+
+            header Content-Type text/plain
+            respond "domain: {http_service.domain}, name: {http_service.name}, page: {http_service.page}"
+        }
+    }
+}
+
+# Test URL encoding (without cache)
+:8081 {
+    route {
+        http_service {
+            url http://localhost:8888
+            param q {query.q}
+        }
+
+        header Content-Type text/plain
+        respond "q: {http_service.q}"
+    }
+}

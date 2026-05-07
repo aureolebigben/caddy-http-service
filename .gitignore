@@ -1,0 +1,22 @@
+# Build output
+caddy
+caddy-http-service
+*.exe
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Caddy runtime (if running locally)
+.caddy/
+
+# Environment
+.env
+.env.local

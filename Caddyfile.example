@@ -1,0 +1,162 @@
+# http_service Caddy Module — Example Caddyfile
+#
+# This file demonstrates how to use the http_service Caddy handler module
+# to call an external HTTP service and inject JSON response keys as
+# {http_service.<key>} placeholders available to subsequent handlers.
+
+# ---------------------------------------------------------------------------
+# Example 1: Basic usage — on_demand_tls with http_service to determine root
+# ---------------------------------------------------------------------------
+#
+# An external API returns the tenant slug for a given host. The response is
+# injected as {http_service.tenant}, which is then used to set the site root.
+#
+# {
+#     on_demand_tls {
+#         ask http://localhost:8080/validate
+#     }
+# }
+
+api.example.com {
+	http_service {
+		url http://internal-api:8080/tenants/{host}
+		method GET
+	}
+
+	# {http_service.tenant} is set to the value returned by the API.
+	root * /srv/{http_service.tenant}
+	file_server
+}
+
+# ---------------------------------------------------------------------------
+# Example 2: POST with custom headers and body
+# ---------------------------------------------------------------------------
+
+auth.example.com {
+	http_service {
+		url https://auth-api.internal/validate
+		method POST
+		header Content-Type application/json
+		header X-API-Key {{env.API_KEY}}
+		body {"token":"{http.request.header.Authorization}"}
+		timeout 5s
+	}
+
+	# Redirect based on the role returned by the auth service.
+	@admin {
+		expression {http_service.role} == 'admin'
+	}
+	handle @admin {
+		respond "Welcome admin" 200
+	}
+	handle {
+		respond "Access denied" 403
+	}
+}
+
+# ---------------------------------------------------------------------------
+# Example 3: Advanced — cache with redis storage and stale-if-error
+# ---------------------------------------------------------------------------
+#
+# This shows a geo-IP lookup service with caching. Redis is used as the
+# storage backend to share the cache across Caddy instances. If the geo
+# service is temporarily down, stale cache data is served instead of
+# returning an error.
+
+# {
+#     storage redis {
+#         host localhost
+#         port 6379
+#     }
+# }
+
+cdn.example.com {
+	http_service {
+		url https://geo-api.internal/lookup/{http.request.remote.host}
+		method GET
+		cache_enabled
+		cache_key_template geo:{http.request.remote.host}
+		cache_ttl 1h
+		cache_stale_enabled
+	}
+
+	# {http_service.country}, {http_service.region} are injected from
+	# the cached (or fresh) geo-IP response.
+	header X-Geo-Country {http_service.country}
+	header X-Geo-Region  {http_service.region}
+
+	respond "Routed to {http_service.region}" 200
+}
+
+# ---------------------------------------------------------------------------
+# Example 4: Fallback — specific handle blocks before the generic handler
+# ---------------------------------------------------------------------------
+#
+# A static path is handled before the http_service handler, so the
+# external API is only called for non-static requests.
+
+app.example.com {
+	# Static assets served directly — no external API call.
+	handle /static/* {
+		root * /var/www/static
+		file_server
+	}
+
+	# Health check endpoint — no external API call.
+	handle /health {
+		respond "ok" 200
+	}
+
+	# Everything else: call the external service to resolve tenant info,
+	# then serve files from the correct root.
+	handle {
+		http_service {
+			url http://tenant-api.internal/resolve
+			cache_enabled
+			cache_key_template tenant:{host}
+			cache_ttl 30m
+		}
+		root * /data/{http_service.tenant_id}
+		file_server
+	}
+}
+
+# ---------------------------------------------------------------------------
+# Example 5: Disable TLS verification for internal dev services
+# ---------------------------------------------------------------------------
+
+dev.example.com {
+	http_service {
+		url https://dev-api.internal/info
+		tls_skip_verify
+		cache_enabled
+		cache_key_template dev:info
+		cache_ttl 5m
+	}
+
+	respond "{http_service.environment} ready" 200
+}
+
+# ---------------------------------------------------------------------------
+# Example 6: Query parameters with URL encoding
+# ---------------------------------------------------------------------------
+#
+# Parameters are defined separately from the URL and URL-encoded before being
+# appended. This is more secure than embedding placeholders directly in the
+# URL, as special characters like &, =, and spaces are properly encoded.
+#
+# A value like "john & sons" becomes "john%20%26%20sons".
+
+tenant.example.com {
+	http_service {
+		url http://tenant-api.internal/resolve
+		param domain {host}
+		param page {query.page}
+		cache_enabled
+		cache_key_template tenant:{host}
+		cache_ttl 30m
+	}
+
+	root * /data/{http_service.tenant_id}
+	file_server
+}
