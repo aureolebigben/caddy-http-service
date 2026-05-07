@@ -1,4 +1,4 @@
-module caddy-http-service
+module github.com/aureolebigben/caddy-http-service
 
 go 1.21
 
